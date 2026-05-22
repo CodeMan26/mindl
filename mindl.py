@@ -19,20 +19,35 @@ class Linear(Module):
         self.n_in=nin
         self.n_out=nout
         self.bias=np.zeros((1, nout))
+        self.dW=np.zeros_like(self.weights)
+        self.db=np.zeros_like(self.bias)
+        self._x =None # cache output
     def forward(self, x):
+        self._x = x
         return x@self.weights + self.bias
+    def backward(self, grad):
+        self.dW += self._x.T @ grad
+        self.db += grad.sum(axis=0)
+        return grad @ self.W.T
+    def parameters(self):
+        return [(self.W, self.dW), (self.b, self.db)]
 
 class Sigmoid(Module):
     def __init__(self):
         super().__init__()
     def forward(self, x):
-        return 1 / (1 + np.exp(-x))
+        self.output=1 / (1 + np.exp(-x))
+        return self.output
+    def backward(self, grad):
+        return grad * self.output * (1 - self.output)
 
 class ReLU(Module):
-    def __init__(self):
-        super().__init__()
     def forward(self, x):
-        return np.where(x>=0, x, 0)
+        self._mask = (x > 0) # where x is positive
+        return x * self._mask # zero out negetive
+    def backward(self, grad):
+        # it is simple if (x > 0) grad flows if x<=0 grad is zero
+        return grad * self._mask
 
 class Tanh(Module):
     def __init__(self):
@@ -65,12 +80,20 @@ class BatchNorm():
         else:
             mean=self.running_mean
             var=self.running_var
-        x_mu = x - mean
-        var_sqr = 1 / np.sqrt(var+self.eps)
-        x_Norm = x_mu * var_sqr
+        self.x_mu = x - mean
+        self.var_sqr = 1 / np.sqrt(var+self.eps)
+        self.x_Norm = self.x_mu * self.var_sqr
         output = self.gamma * x_Norm + self.beta
         return output
-
+    def backward(self, grad):
+        B = grad.shape[0]
+        db += grad.sum(axis=0)
+        dg += (grad * self.x_Norm).sum(axis=0)
+        self.dx_norm=grad * self.gamma
+        self.dvar = (self.dx_norm * self.x_mu * -0.5 * (self.var_sqr**3)).sum(axis=0)
+        self.dmu = (self.dx_norm * (-self.var_sqr)).sum(axis=0) + self.dvar * (-2*(self.x_mu)).mean(axis=0)
+        self.dx = self.dx_norm * self.var_sqr + self.dvar * 2*(self.x_mu)/B + self.dmu / B
+        
 
 class Sequential(Module):
     def __init__(self, *layers):
@@ -94,6 +117,8 @@ class MSELoss():
 
 class BSELoss():
     def __call__(self, input, target):
+        self.input=input
+        self.target=target
         self.epsilon=1e-7
         target_clip = np.clip(target, self.epsilon, 1 - self.epsilon)
         t1 = input*np.log(target_clip)
@@ -101,6 +126,11 @@ class BSELoss():
         final= -(t1+t2)
         loss=np.mean(final) # average
         return loss
+    def backward(self):
+        B=self.input.shape[0]
+        target_clip = np.clip(target, self.epsilon, 1-self.epsilon)
+        return (-(self.input / target_clip) + (1 - self.input) / (1 - self.target))/B
+        
 
 class SGD():
     def __init__(self,params, lr=0.01):
@@ -152,7 +182,6 @@ class DataLoader():
             Y_batch=np.stack([self.data[i][1] for i in batch_idx])
 
             yield X_batch, Y_batch
-
 
 
 
